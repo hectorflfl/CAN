@@ -82,11 +82,18 @@ volatile uint32_t received_mb_idx;
 flexcan_handle_t flexcanHandle;
 flexcan_mb_transfer_t tx100Xfer, tx50Xfer, rx1Xfer, rx2Xfer;
 flexcan_frame_t tx100Frame, tx50Frame, rx1Frame, rx2Frame;
+#define K641 1
+#if K64 == 1
 uint32_t tx100Identifier = 0x99;
 uint32_t tx50Identifier = 0x49;
-uint32_t rx1Identifier = 0x106;
-uint32_t rx2Identifier = 0x102;
-
+uint32_t rx1Identifier = 0x106; /*Led*/
+uint32_t rx2Identifier = 0x107;	/*ADC*/
+#else K64 == 2
+uint32_t tx100Identifier = 0x100;
+uint32_t tx50Identifier = 0x50;
+uint32_t rx1Identifier = 0x101; /*Led*/
+uint32_t rx2Identifier = 0x102;	/*ADC*/
+#endif
 /*******************************************************************************
  * Code
  ******************************************************************************/
@@ -163,33 +170,93 @@ void CAN_Init(void)
 	    FLEXCAN_SetTxMbConfig(EXAMPLE_CAN, TX50_MESSAGE_BUFFER_NUM, true);
 }
 
+void adcInit(void){
+
+	  adc16_config_t adc16ConfigStruct;
+	  adc16_channel_config_t adc16ChannelConfigStruct;
+
+	    BOARD_InitPins();
+	    BOARD_BootClockRUN();
+	    BOARD_InitDebugConsole();
+
+	    PRINTF("\r\nADC16 polling Example.\r\n");
+
+	    /*
+	     * adc16ConfigStruct.referenceVoltageSource = kADC16_ReferenceVoltageSourceVref;
+	     * adc16ConfigStruct.clockSource = kADC16_ClockSourceAsynchronousClock;
+	     * adc16ConfigStruct.enableAsynchronousClock = true;
+	     * adc16ConfigStruct.clockDivider = kADC16_ClockDivider8;
+	     * adc16ConfigStruct.resolution = kADC16_ResolutionSE12Bit;
+	     * adc16ConfigStruct.longSampleMode = kADC16_LongSampleDisabled;
+	     * adc16ConfigStruct.enableHighSpeed = false;
+	     * adc16ConfigStruct.enableLowPower = false;
+	     * adc16ConfigStruct.enableContinuousConversion = false;
+	     */
+	    ADC16_GetDefaultConfig(&adc16ConfigStruct);
+	#ifdef BOARD_ADC_USE_ALT_VREF
+	    adc16ConfigStruct.referenceVoltageSource = kADC16_ReferenceVoltageSourceValt;
+	#endif
+	    ADC16_Init(DEMO_ADC16_BASE, &adc16ConfigStruct);
+	    ADC16_EnableHardwareTrigger(DEMO_ADC16_BASE, false); /* Make sure the software trigger is used. */
+	#if defined(FSL_FEATURE_ADC16_HAS_CALIBRATION) && FSL_FEATURE_ADC16_HAS_CALIBRATION
+	    if (kStatus_Success == ADC16_DoAutoCalibration(DEMO_ADC16_BASE))
+	    {
+	        PRINTF("ADC16_DoAutoCalibration() Done.\r\n");
+	    }
+	    else
+	    {
+	        PRINTF("ADC16_DoAutoCalibration() Failed.\r\n");
+	    }
+	#endif /* FSL_FEATURE_ADC16_HAS_CALIBRATION */
+	    PRINTF("Press any key to get user channel's ADC value ...\r\n");
+
+	    adc16ChannelConfigStruct.channelNumber = DEMO_ADC16_USER_CHANNEL;
+	    adc16ChannelConfigStruct.enableInterruptOnConversionCompleted = false;
+	#if defined(FSL_FEATURE_ADC16_HAS_DIFF_MODE) && FSL_FEATURE_ADC16_HAS_DIFF_MODE
+	    adc16ChannelConfigStruct.enableDifferentialConversion = false;
+	#endif /* FSL_FEATURE_ADC16_HAS_DIFF_MODE */
+
+}
+
+uint32_t getAdcValue(){
+	adc16_channel_config_t adc16ChannelConfigStruct;
+
+	 ADC16_SetChannelConfig(DEMO_ADC16_BASE, DEMO_ADC16_CHANNEL_GROUP, &adc16ChannelConfigStruct);
+		        while (0U == (kADC16_ChannelConversionDoneFlag &
+		                      ADC16_GetChannelStatusFlags(DEMO_ADC16_BASE, DEMO_ADC16_CHANNEL_GROUP)))
+		        {
+		        }
+		        PRINTF("ADC Value: %d\r\n", ADC16_GetChannelConversionValue(DEMO_ADC16_BASE, DEMO_ADC16_CHANNEL_GROUP));
+
+
+	return ADC16_GetChannelConversionValue(DEMO_ADC16_BASE, DEMO_ADC16_CHANNEL_GROUP);
+
+}
+
+void gpioInit(){
+	/* Define the init structure for the output LED pin*/
+			    gpio_pin_config_t led_config = {
+			        kGPIO_DigitalOutput, 0,
+			    };
+	  /* Init output LED GPIO. */
+		 GPIO_PinInit(BOARD_LED_GPIO, BOARD_LED_GPIO_PIN, &led_config);
+}
+
 int main(void)
 {
-	/* Define the init structure for the output LED pin*/
-		    gpio_pin_config_t led_config = {
-		        kGPIO_DigitalOutput, 0,
-		    };
-
-
 	/* Initialize board hardware. */
 	BOARD_InitPins();
 	BOARD_BootClockRUN();
 	BOARD_InitDebugConsole();
 	CAN_Init();
+	adcInit();
+	gpioInit();
 
-	  /* Init output LED GPIO. */
-	 GPIO_PinInit(BOARD_LED_GPIO, BOARD_LED_GPIO_PIN, &led_config);
 
     xTaskCreate(task_100ms, "100ms Task", configMINIMAL_STACK_SIZE + 10, NULL, hello_task_PRIORITY, NULL);
     xTaskCreate(task_50ms, "50ms Task", configMINIMAL_STACK_SIZE + 10, NULL, hello_task_PRIORITY, NULL);
     xTaskCreate(task_rx, "rx Task", configMINIMAL_STACK_SIZE + 10, NULL, hello_task_PRIORITY, NULL);
     vTaskStartScheduler();
-
-
-
-
-
-
 
     for (;;);
 
@@ -234,46 +301,6 @@ static void task_100ms(void *pvParameters)
 static void task_50ms(void *pvParameters)
 {
 
-	  adc16_config_t adc16ConfigStruct;
-	    adc16_channel_config_t adc16ChannelConfigStruct;
-
-
-
-	    PRINTF("\r\nADC16 polling Example.\r\n");
-
-	    ADC16_GetDefaultConfig(&adc16ConfigStruct);
-	#ifdef BOARD_ADC_USE_ALT_VREF
-	    adc16ConfigStruct.referenceVoltageSource = kADC16_ReferenceVoltageSourceValt;
-	#endif
-	    ADC16_Init(DEMO_ADC16_BASE, &adc16ConfigStruct);
-	    ADC16_EnableHardwareTrigger(DEMO_ADC16_BASE, false); /* Make sure the software trigger is used. */
-	#if defined(FSL_FEATURE_ADC16_HAS_CALIBRATION) && FSL_FEATURE_ADC16_HAS_CALIBRATION
-	    if (kStatus_Success == ADC16_DoAutoCalibration(DEMO_ADC16_BASE))
-	    {
-	        PRINTF("ADC16_DoAutoCalibration() Done.\r\n");
-	    }
-	    else
-	    {
-	        PRINTF("ADC16_DoAutoCalibration() Failed.\r\n");
-	    }
-	#endif /* FSL_FEATURE_ADC16_HAS_CALIBRATION */
-	    PRINTF("Press any key to get user channel's ADC value ...\r\n");
-
-	    adc16ChannelConfigStruct.channelNumber = DEMO_ADC16_USER_CHANNEL;
-	    adc16ChannelConfigStruct.enableInterruptOnConversionCompleted = false;
-	#if defined(FSL_FEATURE_ADC16_HAS_DIFF_MODE) && FSL_FEATURE_ADC16_HAS_DIFF_MODE
-	    adc16ChannelConfigStruct.enableDifferentialConversion = false;
-	#endif /* FSL_FEATURE_ADC16_HAS_DIFF_MODE */
-
-
-
-
-
-
-
-
-
-
 	TickType_t xLastWakeTime;
 	const TickType_t xFrequency = OS_TICK_PERIOD_50MS;
 	volatile uint32_t can_flags = 0;
@@ -294,15 +321,9 @@ static void task_50ms(void *pvParameters)
     	tx50Xfer.mbIdx = TX50_MESSAGE_BUFFER_NUM;
     	FLEXCAN_TransferSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &tx50Xfer);
 
-    	 ADC16_SetChannelConfig(DEMO_ADC16_BASE, DEMO_ADC16_CHANNEL_GROUP, &adc16ChannelConfigStruct);
-    		        while (0U == (kADC16_ChannelConversionDoneFlag &
-    		                      ADC16_GetChannelStatusFlags(DEMO_ADC16_BASE, DEMO_ADC16_CHANNEL_GROUP)))
-    		        {
-    		        }
-    		        PRINTF("ADC Value: %d\r\n", ADC16_GetChannelConversionValue(DEMO_ADC16_BASE, DEMO_ADC16_CHANNEL_GROUP));
 
 
-    	tx50Frame.dataWord0 =ADC16_GetChannelConversionValue(DEMO_ADC16_BASE, DEMO_ADC16_CHANNEL_GROUP);
+    	tx50Frame.dataWord0 =getAdcValue();
 
 
         // Wait for the next cycle.
@@ -317,7 +338,7 @@ static void task_rx(void *pvParameters)
 {
 	volatile uint32_t can_flags = 0;
 	flexcan_frame_t* rxFrame;
-	uint8_t high = 0;
+
 	// Initialize the xLastWakeTime variable with the current time.
     for (;;)
     {
